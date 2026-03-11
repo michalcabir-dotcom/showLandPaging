@@ -41,7 +41,7 @@ const pushToSession = (sessionId, eventData) => {
         return false;
     }
 
-    io.to(socketId).emit('identity_resolved', eventData);
+    io.to(socketId).emit('html_resolved', eventData);
     logger.info('Pushed identity result to session', { sessionId, socketId, eventData });
     return true;
 };
