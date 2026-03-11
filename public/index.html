@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RB2B Latency POC — showLandPaging</title>
+
+  <!--
+    Timer starts here — as close to navigation start as possible.
+    performance.now() returns milliseconds elapsed since the page's
+    time origin (navigationStart), so this captures almost zero overhead.
+  -->
+  <script>
+    window.__pageLoadStart = performance.now();
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f0f13;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 48px 16px;
+    }
+
+    h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+      color: #fff;
+    }
+
+    .subtitle {
+      font-size: 0.85rem;
+      color: #64748b;
+      margin-bottom: 40px;
+      text-align: center;
+    }
+
+    .card {
+      background: #1a1a24;
+      border: 1px solid #2d2d3d;
+      border-radius: 12px;
+      padding: 28px 32px;
+      width: 100%;
+      max-width: 660px;
+      margin-bottom: 20px;
+    }
+
+    .card-title {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: #475569;
+      margin-bottom: 16px;
+    }
+
+    /* ── Metric row ─────────────────────────────────────────────────── */
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid #2d2d3d;
+    }
+    .metric:last-child { border-bottom: none; }
+    .metric-label { font-size: 0.85rem; color: #94a3b8; }
+    .metric-value {
+      font-size: 0.9rem;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: #cbd5e1;
+    }
+    .metric-value.highlight { color: #38bdf8; }
+
+    /* ── Status banner ──────────────────────────────────────────────── */
+    #status-banner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 18px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #94a3b8;
+      transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+    }
+    #status-banner.connected { border-color: #1d4ed8; color: #93c5fd; background: #0f2044; }
+    #status-banner.waiting   { border-color: #d97706; color: #fcd34d; background: #1c1205; }
+    #status-banner.resolved  { border-color: #15803d; color: #86efac; background: #052e16; }
+    #status-banner.error     { border-color: #b91c1c; color: #fca5a5; background: #2a0808; }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+    .dot.pulse { animation: pulse 1.4s ease-in-out infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    /* ── Result card ────────────────────────────────────────────────── */
+    #result-card { display: none; }
+
+    /* LinkedIn URL pill */
+    #resolved-linkedin {
+      display: inline-block;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 4px 10px;
+      color: #7dd3fc;
+      font-family: monospace;
+      font-size: 0.75rem;
+      word-break: break-all;
+      margin-bottom: 20px;
+    }
+
+    /* ── Dual latency grid ──────────────────────────────────────────── */
+    .latency-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .latency-box {
+      background: #0f172a;
+      border: 1px solid #1e2f47;
+      border-radius: 10px;
+      padding: 16px 18px;
+    }
+
+    .latency-box-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: #475569;
+      margin-bottom: 8px;
+    }
+
+    .latency-box-value {
+      font-size: 1.6rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+
+    .latency-box-value.total    { color: #38bdf8; }   /* sky blue  — end-to-end  */
+    .latency-box-value.edge     { color: #a78bfa; }   /* violet    — Worker only */
+
+    .latency-box-sub {
+      font-size: 0.72rem;
+      color: #475569;
+      margin-top: 4px;
+    }
+
+    /* Separator above injected HTML */
+    .html-separator {
+      border: none;
+      border-top: 1px solid #2d2d3d;
+      margin-bottom: 20px;
+    }
+
+    /* The HTML payload from Cloudflare is injected here as-is */
+    #html-output {
+      all: initial;
+      font-family: inherit;
+      display: block;
+      width: 100%;
+    }
+
+    /* ── Simulate panel ─────────────────────────────────────────────── */
+    .sim-description {
+      font-size: 0.8rem;
+      color: #64748b;
+      margin-bottom: 16px;
+      line-height: 1.6;
+    }
+    .sim-description code {
+      background: #0f172a;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 0.78rem;
+      color: #7dd3fc;
+    }
+
+    .input-label {
+      font-size: 0.78rem;
+      color: #64748b;
+      margin-bottom: 6px;
+      display: block;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 10px;
+    }
+    .input-row input {
+      flex: 1;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.85rem;
+      color: #e2e8f0;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .input-row input:focus { border-color: #3b82f6; }
+    .input-row input::placeholder { color: #475569; }
+
+    button {
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.2s;
+    }
+    button:hover  { background: #1d4ed8; }
+    button:active { background: #1e40af; }
+    button:disabled { background: #1e3a6e; color: #475569; cursor: not-allowed; }
+
+    #sim-error {
+      margin-top: 10px;
+      font-size: 0.8rem;
+      color: #f87171;
+      min-height: 18px;
+    }
+
+    /* ── LinkedIn URL reference table ───────────────────────────────── */
+    .url-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .url-table th {
+      text-align: left;
+      padding: 6px 10px;
+      color: #475569;
+      border-bottom: 1px solid #2d2d3d;
+    }
+    .url-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid #1e2435;
+      color: #94a3b8;
+      font-family: monospace;
+      font-size: 0.75rem;
+    }
+    .url-table td:last-child { font-family: sans-serif; color: #cbd5e1; }
+    .copy-btn {
+      background: none;
+      border: 1px solid #334155;
+      border-radius: 4px;
+      color: #7dd3fc;
+      font-size: 0.7rem;
+      padding: 2px 7px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .copy-btn:hover { background: #1e293b; }
+  </style>
+</head>
+<body>
+
+  <h1>RB2B Latency POC</h1>
+  <p class="subtitle">
+    Measures time from page load → RB2B identification → Cloudflare Worker (KV + R2) → WebSocket push
+  </p>
+
+  <!-- ── Page timing metrics ────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Page Timing Metrics</div>
+    <div class="metric">
+      <span class="metric-label">Initial JS execution time</span>
+      <span class="metric-value highlight" id="js-exec-time">—</span>
+    </div>
+    <div class="metric">
+      <span class="metric-label">DOM Content Loaded</span>
+      <span class="metric-value" id="dom-ready-time">—</span>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Session ID</span>
+      <span class="metric-value" id="session-id-display" style="font-size:0.7rem;word-break:break-all;">—</span>
+    </div>
+  </div>
+
+  <!-- ── Live status ────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Live Status</div>
+    <div id="status-banner">
+      <div class="dot pulse"></div>
+      <span id="status-text">Initializing WebSocket connection…</span>
+    </div>
+  </div>
+
+  <!-- ── Resolution result — dual latency + injected HTML ──────────── -->
+  <div class="card" id="result-card">
+    <div class="card-title">Identity Resolution Result</div>
+
+    <!-- Identified LinkedIn URL pill -->
+    <div id="resolved-linkedin">—</div>
+
+    <!-- Dual latency stopwatches -->
+    <div class="latency-grid">
+      <div class="latency-box">
+        <div class="latency-box-label">Total Time since Page Load</div>
+        <div class="latency-box-value total" id="elapsed-total">—</div>
+        <div class="latency-box-sub">navigationStart → HTML received</div>
+      </div>
+      <div class="latency-box">
+        <div class="latency-box-label">Data Retrieval (Worker + KV + R2)</div>
+        <div class="latency-box-value edge" id="elapsed-edge">—</div>
+        <div class="latency-box-sub">Node.js fetch → Cloudflare response</div>
+      </div>
+    </div>
+
+    <hr class="html-separator" />
+
+    <!-- Raw HTML payload from R2 injected here -->
+    <div id="html-output"></div>
+  </div>
+
+  <!-- ── Simulate webhook (local testing) ──────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Simulate RB2B Webhook (Local Testing)</div>
+    <p class="sim-description">
+      In production, RB2B calls <code>POST /webhook/rb2b</code> from their servers after
+      identifying a visitor by their LinkedIn profile. The simulation below adds a
+      <strong>2500ms artificial delay</strong> before resolving — matching the average
+      real-world RB2B identification time — then executes the full Cloudflare Worker
+      round-trip (KV lookup → R2 fetch → WebSocket push).
+    </p>
+    <label class="input-label" for="sim-linkedin">LinkedIn Profile URL</label>
+    <div class="input-row">
+      <input
+        type="url"
+        id="sim-linkedin"
+        placeholder="https://linkedin.com/in/alice"
+      />
+      <button id="sim-btn" disabled>Simulate</button>
+    </div>
+    <div id="sim-error"></div>
+  </div>
+
+  <!-- ── LinkedIn URL reference ─────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Seeded LinkedIn URLs (copy to simulate)</div>
+    <table class="url-table">
+      <thead>
+        <tr><th>LinkedIn URL</th><th>HTML file</th><th></th></tr>
+      </thead>
+      <tbody id="url-table-body"></tbody>
+    </table>
+  </div>
+
+  <!-- Socket.io client served by the backend -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <script>
+    // ─── Constants & state ──────────────────────────────────────────────────────
+    const PAGE_LOAD_START = window.__pageLoadStart;
+
+    // Unique session ID — passed to the backend so the webhook response can be
+    // routed back to this exact browser tab via WebSocket.
+    const SESSION_ID = 'sess_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now();
+
+    // Seed reference (mirrors scripts/seed-data.js — for the URL table only)
+    const SEED_MAPPINGS = [
+      { linkedinUrl: 'https://linkedin.com/in/alice',   filename: 'alice.html'   },
+      { linkedinUrl: 'https://linkedin.com/in/bob',     filename: 'bob.html'     },
+      { linkedinUrl: 'https://linkedin.com/in/charlie', filename: 'charlie.html' },
+      { linkedinUrl: 'https://linkedin.com/in/diana',   filename: 'diana.html'   },
+      { linkedinUrl: 'https://linkedin.com/in/eve',     filename: 'eve.html'     },
+    ];
+
+    // ─── UI helpers ─────────────────────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+
+    const setStatus = (text, type) => {
+      const banner = $('status-banner');
+      const dot    = banner.querySelector('.dot');
+      banner.className = type || '';
+      $('status-text').textContent = text;
+      dot.className = 'dot' + (type === 'connected' || type === 'waiting' ? ' pulse' : '');
+    };
+
+    const formatMs = (ms) =>
+      ms >= 1000
+        ? (ms / 1000).toFixed(3) + ' s'
+        : ms.toFixed(2) + ' ms';
+
+    // ─── Display JS execution time (first meaningful metric) ────────────────────
+    $('js-exec-time').textContent       = formatMs(performance.now() - PAGE_LOAD_START);
+    $('session-id-display').textContent = SESSION_ID;
+
+    // ─── DOMContentLoaded timing ────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      $('dom-ready-time').textContent = formatMs(performance.now() - PAGE_LOAD_START);
+    });
+
+    // ─── Populate LinkedIn URL reference table ───────────────────────────────────
+    const tbody = $('url-table-body');
+    SEED_MAPPINGS.forEach(({ linkedinUrl, filename }) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${linkedinUrl}</td>
+        <td>${filename}</td>
+        <td>
+          <button class="copy-btn" data-url="${linkedinUrl}">Copy</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    // Copy button → fills the simulate input
+    tbody.addEventListener('click', (e) => {
+      if (e.target.classList.contains('copy-btn')) {
+        $('sim-linkedin').value = e.target.dataset.url;
+        $('sim-linkedin').focus();
+      }
+    });
+
+    // ─── Socket.io setup ────────────────────────────────────────────────────────
+    const socket = io();
+
+    socket.on('connect', () => {
+      socket.emit('register_session', SESSION_ID);
+      setStatus('Connected — waiting for RB2B to identify visitor…', 'connected');
+      $('sim-btn').disabled = false;
+    });
+
+    socket.on('disconnect', () => {
+      setStatus('WebSocket disconnected', 'error');
+      $('sim-btn').disabled = true;
+    });
+
+    socket.on('connect_error', () => {
+      setStatus('WebSocket connection error', 'error');
+    });
+
+    // ─── html_resolved: identity confirmed + HTML payload received ───────────────
+    //
+    // Payload: { html: string, linkedinUrl: string, resolutionLatency: number }
+    //   html               — raw HTML from R2 via the Cloudflare Worker
+    //   linkedinUrl        — the identified visitor's LinkedIn profile URL
+    //   resolutionLatency  — milliseconds from Node.js fetch start → Worker response
+    socket.on('html_resolved', ({ html, linkedinUrl, resolutionLatency }) => {
+      const totalElapsed = performance.now() - PAGE_LOAD_START;
+
+      setStatus(`Identity resolved — ${linkedinUrl}`, 'resolved');
+
+      // ── Dual stopwatch display ──────────────────────────────────────
+      $('resolved-linkedin').textContent = linkedinUrl;
+      $('elapsed-total').textContent     = formatMs(totalElapsed);
+      $('elapsed-edge').textContent      = formatMs(resolutionLatency);
+
+      // ── Inject personalised HTML payload ───────────────────────────
+      $('html-output').innerHTML     = html;
+      $('result-card').style.display = 'block';
+
+      // Re-enable simulate button in case the user wants to run again
+      $('sim-btn').disabled    = false;
+      $('sim-btn').textContent = 'Simulate';
+    });
+
+    // ─── RB2B script integration point ──────────────────────────────────────────
+    //
+    // In production, paste the real RB2B snippet here.  When RB2B fires its
+    // client-side callback with the identified LinkedIn URL, call:
+    //
+    //   fetch('/webhook/rb2b', {
+    //     method: 'POST',
+    //     headers: { 'Content-Type': 'application/json' },
+    //     body: JSON.stringify({ linkedinUrl: identifiedLinkedinUrl, sessionId: SESSION_ID }),
+    //   });
+    //
+    // For server-to-server webhooks, configure RB2B to POST to your public URL
+    // at /webhook/rb2b and include sessionId as a custom parameter.
+
+    // ─── Simulate webhook (local testing) ───────────────────────────────────────
+    const simBtn      = $('sim-btn');
+    const simLinkedin = $('sim-linkedin');
+    const simError    = $('sim-error');
+
+    simBtn.addEventListener('click', async () => {
+      const linkedinUrl = simLinkedin.value.trim();
+      simError.textContent = '';
+
+      if (!linkedinUrl) {
+        simError.textContent = 'Please enter a LinkedIn profile URL.';
+        return;
+      }
+
+      simBtn.disabled    = true;
+      simBtn.textContent = 'Sending…';
+
+      // Show waiting state immediately — the result arrives via WebSocket
+      // after the simulated 2500ms RB2B delay + Cloudflare Worker round-trip.
+      setStatus('Waiting for RB2B identification (simulated 2500ms delay)…', 'waiting');
+
+      try {
+        const res  = await fetch('/webhook/mock/simulate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ linkedinUrl, sessionId: SESSION_ID }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          // Validation error returned before the delay fires
+          simError.textContent = data.error || 'Simulation failed.';
+          simBtn.disabled    = false;
+          simBtn.textContent = 'Simulate';
+          setStatus('Connected — waiting for RB2B to identify visitor…', 'connected');
+        }
+        // On success (202): button stays disabled — html_resolved will re-enable it
+      } catch {
+        simError.textContent = 'Network error — is the server running?';
+        simBtn.disabled    = false;
+        simBtn.textContent = 'Simulate';
+        setStatus('Connected — waiting for RB2B to identify visitor…', 'connected');
+      }
+    });
+  </script>
+</body>
+</html>

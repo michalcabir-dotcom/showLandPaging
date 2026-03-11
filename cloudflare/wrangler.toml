@@ -1,0 +1,24 @@
+name            = "show-land-paging-worker"
+main            = "worker.js"
+compatibility_date = "2024-09-23"
+
+# ── KV namespace binding ──────────────────────────────────────────────────────
+# Maps raw LinkedIn profile URLs to HTML filenames stored in R2.
+# Create via: wrangler kv namespace create LINKEDIN_MAPPING_KV
+# Then add entries: wrangler kv key put --binding=LINKEDIN_MAPPING_KV "https://linkedin.com/in/alice" "alice.html"
+[[kv_namespaces]]
+binding = "LINKEDIN_MAPPING_KV"
+id      = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+# ── R2 bucket binding ─────────────────────────────────────────────────────────
+# Stores the personalised HTML files keyed by filename.
+# Create via: wrangler r2 bucket create html-assets
+# Then upload: wrangler r2 object put html-assets/alice.html --file ./dummy-html/alice.html
+[[r2_buckets]]
+binding     = "HTML_ASSETS_BUCKET"
+bucket_name = "html-assets"
+
+# ── Local dev (wrangler dev) ──────────────────────────────────────────────────
+# Uncomment to use local KV/R2 persistence during development:
+# [dev]
+# persist_to = ".wrangler/state"
