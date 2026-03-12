@@ -41,7 +41,7 @@ const fetchHtmlFromWorker = async (linkedinUrl) => {
  * @param {string} sessionId
  * @param {object} res - Express response object
  */
-const resolveAndPush = async (linkedinUrl, sessionId, res) => {
+const resolveAndPush = async (linkedinUrl, sessionId, res, rb2bLatency = null) => {
     const startTime = performance.now();
 
     let html;
@@ -59,7 +59,7 @@ const resolveAndPush = async (linkedinUrl, sessionId, res) => {
     const resolutionLatency = performance.now() - startTime;
     logger.info('Cloudflare Worker fetch succeeded', { linkedinUrl, resolutionLatency });
 
-    const pushed = pushToSession(sessionId, { html, linkedinUrl, resolutionLatency });
+    const pushed = pushToSession(sessionId, { html, linkedinUrl, resolutionLatency, rb2bLatency });
     if (!pushed) {
         logger.warn('Session not connected', { sessionId });
         return res.status(404).json({ error: 'Session not connected — WebSocket may not be ready yet' });
@@ -88,13 +88,26 @@ router.post('/rb2b', async (req, res) => {
         return res.status(400).json({ error: 'Missing required field: LinkedIn URL' });
     }
 
-    // Extract sessionId from the ?sid= query param RB2B captured in the page URL
+    // Extract sessionId and page-load timestamp from the ?sid= query param.
+    // The sid is URL-safe base64({ t: <epoch ms>, n: <nonce> }) set by the client.
     let sessionId = null;
+    let rb2bLatency = null;
+
     if (capturedUrl) {
         try {
-            sessionId = new URL(capturedUrl).searchParams.get('sid');
+            const sid = new URL(capturedUrl).searchParams.get('sid');
+            if (sid) {
+                sessionId = sid;
+                // Restore standard base64 padding before decoding
+                const b64 = sid.replace(/-/g, '+').replace(/_/g, '/');
+                const decoded = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+                if (decoded.t) {
+                    rb2bLatency = Date.now() - decoded.t;
+                    logger.info('RB2B identification latency computed', { rb2bLatency, pageLoadTs: decoded.t });
+                }
+            }
         } catch {
-            logger.warn('Could not parse Captured URL', { capturedUrl });
+            logger.warn('Could not parse Captured URL or decode sid', { capturedUrl });
         }
     }
 
@@ -103,7 +116,7 @@ router.post('/rb2b', async (req, res) => {
         return res.status(400).json({ error: 'No sessionId found in Captured URL' });
     }
 
-    await resolveAndPush(linkedinUrl, sessionId, res);
+    await resolveAndPush(linkedinUrl, sessionId, res, rb2bLatency);
 });
 
 /**

@@ -171,8 +171,9 @@
       line-height: 1;
     }
 
-    .latency-box-value.total    { color: #38bdf8; }   /* sky blue  — end-to-end  */
-    .latency-box-value.edge     { color: #a78bfa; }   /* violet    — Worker only */
+    .latency-box-value.total    { color: #38bdf8; }   /* sky blue  — end-to-end   */
+    .latency-box-value.edge     { color: #a78bfa; }   /* violet    — Worker only  */
+    .latency-box-value.rb2b     { color: #34d399; }   /* green     — RB2B only    */
 
     .latency-box-sub {
       font-size: 0.72rem;
@@ -331,12 +332,17 @@
     <!-- Identified LinkedIn URL pill -->
     <div id="resolved-linkedin">—</div>
 
-    <!-- Dual latency stopwatches -->
-    <div class="latency-grid">
+    <!-- Triple latency stopwatches -->
+    <div class="latency-grid" style="grid-template-columns: 1fr 1fr 1fr;">
       <div class="latency-box">
         <div class="latency-box-label">Total Time since Page Load</div>
         <div class="latency-box-value total" id="elapsed-total">—</div>
         <div class="latency-box-sub">navigationStart → HTML received</div>
+      </div>
+      <div class="latency-box">
+        <div class="latency-box-label">RB2B Identification</div>
+        <div class="latency-box-value rb2b" id="elapsed-rb2b">—</div>
+        <div class="latency-box-sub">Page load → webhook received</div>
       </div>
       <div class="latency-box">
         <div class="latency-box-label">Data Retrieval (Worker + KV + R2)</div>
@@ -391,12 +397,14 @@
     // ─── Constants & state ──────────────────────────────────────────────────────
     const PAGE_LOAD_START = window.__pageLoadStart;
 
-    // Unique session ID — passed to the backend so the webhook response can be
-    // routed back to this exact browser tab via WebSocket.
-    const SESSION_ID = 'sess_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now();
+    // SESSION_ID encodes the page-load timestamp + a random nonce as URL-safe base64.
+    // Format: base64url({ t: Date.now(), n: "<nonce>" })
+    // The backend decodes this from the RB2B webhook's "Captured URL" field and
+    // subtracts t from the webhook arrival time to get RB2B identification latency.
+    const _sidPayload = JSON.stringify({ t: Date.now(), n: Math.random().toString(36).slice(2, 10) });
+    const SESSION_ID  = btoa(_sidPayload).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 
-    // Embed sessionId in the URL so RB2B includes it in the webhook's "Captured URL" field.
-    // This lets the backend correlate the webhook back to this browser tab.
+    // Embed sessionId in the URL so RB2B captures it in the webhook's "Captured URL" field.
     history.replaceState(null, '', '/?sid=' + SESSION_ID);
 
     // Seed reference (mirrors scripts/seed-data.js — for the URL table only)
@@ -479,14 +487,15 @@
     //   html               — raw HTML from R2 via the Cloudflare Worker
     //   linkedinUrl        — the identified visitor's LinkedIn profile URL
     //   resolutionLatency  — milliseconds from Node.js fetch start → Worker response
-    socket.on('html_resolved', ({ html, linkedinUrl, resolutionLatency }) => {
+    socket.on('html_resolved', ({ html, linkedinUrl, resolutionLatency, rb2bLatency }) => {
       const totalElapsed = performance.now() - PAGE_LOAD_START;
 
       setStatus(`Identity resolved — ${linkedinUrl}`, 'resolved');
 
-      // ── Dual stopwatch display ──────────────────────────────────────
+      // ── Triple stopwatch display ────────────────────────────────────
       $('resolved-linkedin').textContent = linkedinUrl;
       $('elapsed-total').textContent     = formatMs(totalElapsed);
+      $('elapsed-rb2b').textContent      = rb2bLatency != null ? formatMs(rb2bLatency) : '—';
       $('elapsed-edge').textContent      = formatMs(resolutionLatency);
 
       // ── Inject personalised HTML payload ───────────────────────────
