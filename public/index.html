@@ -395,6 +395,10 @@
     // routed back to this exact browser tab via WebSocket.
     const SESSION_ID = 'sess_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now();
 
+    // Embed sessionId in the URL so RB2B includes it in the webhook's "Captured URL" field.
+    // This lets the backend correlate the webhook back to this browser tab.
+    history.replaceState(null, '', '/?sid=' + SESSION_ID);
+
     // Seed reference (mirrors scripts/seed-data.js — for the URL table only)
     const SEED_MAPPINGS = [
       { linkedinUrl: 'https://linkedin.com/in/alice',   filename: 'alice.html'   },

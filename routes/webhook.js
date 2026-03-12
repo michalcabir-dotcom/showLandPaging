@@ -73,18 +73,34 @@ const resolveAndPush = async (linkedinUrl, sessionId, res) => {
  *
  * Real RB2B server-to-server webhook endpoint.
  * RB2B calls this once it has identified the visitor, sending their LinkedIn URL.
- * The client must have included its sessionId so we can route the result
- * back to the correct browser tab via WebSocket.
+ * The sessionId is extracted from the "Captured URL" field that RB2B includes —
+ * the client embeds it as ?sid=SESSION_ID in the page URL via history.replaceState.
  *
- * Expected body: { linkedinUrl: string, sessionId: string }
+ * Expected body: { "LinkedIn URL": string, "Captured URL": string, ... }
  */
 router.post('/rb2b', async (req, res) => {
-    const { linkedinUrl, sessionId } = req.body;
-    logger.info('RB2B webhook received', { linkedinUrl, sessionId });
+    const linkedinUrl = req.body['LinkedIn URL'];
+    const capturedUrl = req.body['Captured URL'];
+    logger.info('RB2B webhook received', { linkedinUrl, capturedUrl, body: req.body });
 
-    if (!linkedinUrl || !sessionId) {
-        logger.warn('Missing linkedinUrl or sessionId in webhook payload', { body: req.body });
-        return res.status(400).json({ error: 'Missing required fields: linkedinUrl, sessionId' });
+    if (!linkedinUrl) {
+        logger.warn('Missing LinkedIn URL in webhook payload', { body: req.body });
+        return res.status(400).json({ error: 'Missing required field: LinkedIn URL' });
+    }
+
+    // Extract sessionId from the ?sid= query param RB2B captured in the page URL
+    let sessionId = null;
+    if (capturedUrl) {
+        try {
+            sessionId = new URL(capturedUrl).searchParams.get('sid');
+        } catch {
+            logger.warn('Could not parse Captured URL', { capturedUrl });
+        }
+    }
+
+    if (!sessionId) {
+        logger.warn('No sessionId found in Captured URL', { capturedUrl });
+        return res.status(400).json({ error: 'No sessionId found in Captured URL' });
     }
 
     await resolveAndPush(linkedinUrl, sessionId, res);
