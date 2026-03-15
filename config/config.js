@@ -7,7 +7,7 @@ const config = {
     cloudflare: {
         // In production: set CLOUDFLARE_WORKER_URL to your deployed Worker URL.
         // Locally: defaults to the in-process mock Worker route — no Cloudflare account needed.
-        workerUrl: process.env.CLOUDFLARE_WORKER_URL || 'http://localhost:3000/internal/worker',
+        workerUrl: process.env.CLOUDFLARE_WORKER_URL || `http://localhost:${process.env.PORT || 3000}/internal/worker`,
     },
 };
 
