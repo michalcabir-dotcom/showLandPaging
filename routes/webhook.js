@@ -21,6 +21,7 @@ const fetchHtmlFromWorker = async (linkedinUrl) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ linkedinUrl }),
+        signal: AbortSignal.timeout(8000),
     });
 
     if (!response.ok) {
@@ -143,12 +144,13 @@ router.post('/mock/simulate', (req, res) => {
     res.json({ ok: true, message: `Simulating RB2B delay of ${RB2B_SIMULATION_DELAY_MS}ms…` });
 
     // Fire-and-forget: delay simulates RB2B identification time, then resolve.
+    const noopRes = {
+        status: () => noopRes,
+        json:   () => noopRes,
+    };
     setTimeout(() => {
-        resolveAndPush(linkedinUrl, sessionId, {
-            // Dummy res shim — the real response was already sent above.
-            status: () => ({ json: (body) => logger.warn('resolveAndPush error after 202 already sent', body) }),
-            json:   (body) => logger.warn('resolveAndPush completion after 202 already sent', body),
-        });
+        resolveAndPush(linkedinUrl, sessionId, noopRes)
+            .catch((err) => logger.error('resolveAndPush failed after simulated delay', { error: err.message, linkedinUrl }));
     }, RB2B_SIMULATION_DELAY_MS);
 });
 
