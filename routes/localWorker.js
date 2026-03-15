@@ -40,11 +40,10 @@ router.post('/', (req, res) => {
         return res.status(400).json({ error: 'Missing required field: linkedinUrl' });
     }
 
-    // ── KV lookup ────────────────────────────────────────────────────────────
-    const filename = LINKEDIN_KV_MAP[linkedinUrl];
-    if (!filename) {
-        logger.warn('Local Worker: no KV mapping found', { linkedinUrl });
-        return res.status(404).json({ error: `No mapping found for linkedinUrl: ${linkedinUrl}` });
+    // ── KV lookup — fall back to default.html for unrecognised visitors ────────
+    const filename = LINKEDIN_KV_MAP[linkedinUrl] || 'default.html';
+    if (!LINKEDIN_KV_MAP[linkedinUrl]) {
+        logger.info('Local Worker: no specific mapping, serving default', { linkedinUrl });
     }
 
     // ── R2 fetch (reads from dummy-html/) ────────────────────────────────────
